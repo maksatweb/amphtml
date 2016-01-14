@@ -191,33 +191,55 @@ def GenerateValidateBin(out_dir):
   f.write('#!/usr/bin/nodejs\n')
   for l in open('%s/validator_minified.js' % out_dir):
     f.write(l)
-  f.write("""
+    f.write("""
       var fs = require('fs');
       var path = require('path');
+      var http = require('http');
+      var url = require('url');
 
       function main() {
         if (process.argv.length < 3) {
-          console.error('usage: validate <file.html>');
+          console.error('usage: validate <file.html or url>');
           process.exit(1)
         }
         var args = process.argv.slice(2);
         var full_path = args[0];
-        var filename = path.basename(full_path);
-        var contents = fs.readFileSync(full_path, 'utf8');
-        var results = amp.validator.validateString(contents);
-        var output = amp.validator.renderValidationResult(results, filename);
+        var validateFile = function(contents, filename) {
+          var results = amp.validator.validateString(contents);
+          var output = amp.validator.renderValidationResult(results, filename);
 
-        if (output[0] === 'PASS') {
-          for (var i = 0; i < output.length; ++i) {
-            console.info(output[i]);
+          if (output[0] === 'PASS') {
+            for (var i = 0; i < output.length; ++i) {
+              console.info(output[i]);
+            }
+            process.exit(0);
+          } else {  // FAIL
+            for (var i = 0; i < output.length; ++i) {
+              console.error(output[i]);
+            }
+            process.exit(1);
           }
-          process.exit(0);
-        } else {  // FAIL
-          for (var i = 0; i < output.length; ++i) {
-            console.error(output[i]);
+        };
+
+        if (full_path.indexOf('http://') === 0 || full_path.indexOf('https://') === 0) {
+            var callback = function(response) {
+              var contents = '';
+
+              response.on('data', function (chunk) {
+                contents += chunk;
+              });
+
+              response.on('end', function () {
+                validateFile(contents, full_path);
+              });
+            }
+
+            http.request(url.parse(full_path), callback).end();
+        } else {
+            var filename = path.basename(full_path);
+            var contents = fs.readFileSync(full_path, 'utf8');
+            validateFile(contents, filename);
           }
-          process.exit(1);
-        }
       }
 
       if (require.main === module) {
